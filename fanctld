@@ -1,0 +1,62 @@
+#!/bin/bash
+
+FAN_SPEED_FILE='/sys/devices/platform/applesmc.768/fan1_output'
+FAN_MIN_FILE='/sys/devices/platform/applesmc.768/fan1_min'
+FAN_MAX_FILE='/sys/devices/platform/applesmc.768/fan1_max'
+FAN_MANUAL_FILE='/sys/devices/platform/applesmc.768/fan1_manual'
+
+TEMP_FILE='/sys/devices/virtual/thermal/thermal_zone2/temp'
+
+MAX_IDLE_TEMPERATURE=60
+
+speed_max=$(cat $FAN_MAX_FILE)
+speed_min=$(cat $FAN_MIN_FILE)
+
+cooldown_temperature=$(( MAX_IDLE_TEMPERATURE - 5 ))
+cooldown=0
+temp=0
+temp_last=0
+speed=0
+speed_last=0
+
+if [[ $(id -u) == '0' ]]; then
+    echo 1 > $FAN_MANUAL_FILE
+    dry_run=0
+else
+    dry_run=1
+    echo 'This is a dry run. Run as root to take effect.'
+fi
+
+
+while true; do
+    temp=$(cat $TEMP_FILE)
+    temp=${temp::-3}
+    temp=$(echo "$temp_last + ($temp - $temp_last) / 5" | bc)
+    temp_last=$temp
+	
+	if (( temp <= cooldown_temperature )); then
+	    cooldown=0
+	    speed=0
+	fi
+	if (( temp >= MAX_IDLE_TEMPERATURE )) || (( cooldown == 1 )); then
+	    cooldown=1
+	    
+	    speed=$(( temp * 70))
+	    if (( speed > speed_max )); then speed=$speed_max; fi
+	    if (( speed < speed_min )); then speed=0; fi
+	    speed=$(( speed / 100 * 100 ))
+	fi
+	
+    if (( speed != last_speed )); then
+        if (( dry_run == 0 )); then
+            echo $speed > $FAN_SPEED_FILE
+        fi
+    fi
+    
+    if (( dry_run == 1 )); then
+        printf '\rspeed: %4drpm, temp: %3dc' $speed $temp
+    fi
+    
+    last_speed=$speed
+    sleep 0.5
+done
